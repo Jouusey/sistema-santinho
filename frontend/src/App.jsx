@@ -1,3 +1,5 @@
+// App.jsx — SPA mínima "meia meia meia" (React + axios)
+// Entregas: 4 (login), 5 (principal), 6 (cadastro produto), 7 (gestão de estoque)
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import "./App.css";
@@ -15,9 +17,15 @@ const toInt = (v, def = 0) => {
 };
 
 export default function App() {
-  const [view, setView] = useState("login"); // 'login' | 'home' | 'materiais' | 'estoque'
+  // -------------------------------
+  // estado global simples
+  // -------------------------------
+  const [view, setView] = useState("login"); // 'login' | 'home' | 'produtos' | 'estoque'
   const [user, setUser] = useState(null); // {id, nome, email}
 
+  // -------------------------------
+  // login (4)
+  // -------------------------------
   const [loginEmail, setLoginEmail] = useState("");
   const [loginSenha, setLoginSenha] = useState("");
   const doLogin = async (e) => {
@@ -31,11 +39,7 @@ export default function App() {
         email: loginEmail,
         senha: loginSenha,
       });
-      setUser({
-        id: data.usuario_id,
-        nome: data.usuario_nome,
-        email: data.usuario_email,
-      });
+      setUser(data);
       setView("home");
       setLoginEmail("");
       setLoginSenha("");
@@ -49,134 +53,165 @@ export default function App() {
     setView("login");
   };
 
-  const [materiais, setMateriais] = useState([]);
-  const [loadingMateriais, setLoadingMateriais] = useState(false);
-  const [q, setQ] = useState("");
+  // -------------------------------
+  // produtos (6) + uso em estoque (7)
+  // -------------------------------
+  const [produtos, setProdutos] = useState([]);
+  const [loadingProdutos, setLoadingProdutos] = useState(false);
+  const [q, setQ] = useState(""); // busca
 
-  const emptyMaterial = { id: null, nome: "", tipo: "", quantidade: 0 };
-  const [materialForm, setMaterialForm] = useState(emptyMaterial);
+  // form produto
+  const emptyProduto = { id: null, nome: "", quantidade: 0, estoque_minimo: 0 };
+  const [produtoForm, setProdutoForm] = useState(emptyProduto);
   const [editandoId, setEditandoId] = useState(null);
 
-  const carregarMateriais = async (term = q) => {
-    setLoadingMateriais(true);
+  const carregarProdutos = async (term = q) => {
+    setLoadingProdutos(true);
     try {
-      const url = notEmpty(term) ? `/materiais?q=${encodeURIComponent(term)}` : "/materiais";
+      const url = notEmpty(term) ? `/produtos?q=${encodeURIComponent(term)}` : "/produtos";
       const { data } = await API.get(url);
-      setMateriais(Array.isArray(data) ? data : []);
+      setProdutos(Array.isArray(data) ? data : []);
     } catch (e) {
-      alert("Erro ao carregar materiais");
+      alert("Erro ao carregar produtos");
     } finally {
-      setLoadingMateriais(false);
+      setLoadingProdutos(false);
     }
   };
 
   useEffect(() => {
-    if (view === "materiais" || view === "estoque") carregarMateriais();
+    if (view === "produtos" || view === "estoque") carregarProdutos();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
-  const materiaisOrdenados = useMemo(() => {
-    return [...materiais].sort((a, b) =>
-      a.material_nome.localeCompare(b.material_nome, "pt-BR", { sensitivity: "base" })
-    );
-  }, [materiais]);
+  const produtosOrdenados = useMemo(() => {
+    // 7.1.1 — ordem alfabética no FRONT (não confiar na ordenação do backend)
+    return [...produtos].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" }));
+  }, [produtos]);
 
-  const limparMaterialForm = () => {
-    setMaterialForm(emptyMaterial);
+  const limparProdutoForm = () => {
+    setProdutoForm(emptyProduto);
     setEditandoId(null);
   };
 
-  const validarMaterialForm = () => {
-    const { nome, quantidade } = materialForm;
-    if (!notEmpty(nome)) return "Informe o nome do material.";
+  const validarProdutoForm = () => {
+    const { nome, quantidade, estoque_minimo } = produtoForm;
+    if (!notEmpty(nome)) return "Informe o nome do produto.";
     if (toInt(quantidade) < 0) return "Quantidade não pode ser negativa.";
+    if (toInt(estoque_minimo) < 0) return "Estoque mínimo não pode ser negativo.";
     return null;
+    // 6.1.6 — validações mínimas
   };
 
-  const criarMaterial = async () => {
-    const msg = validarMaterialForm();
+  const criarProduto = async () => {
+    const msg = validarProdutoForm();
     if (msg) return alert(msg);
     try {
-      await API.post("/materiais", {
-        nome: materialForm.nome.trim(),
-        tipo: notEmpty(materialForm.tipo) ? materialForm.tipo.trim() : null,
-        quantidade: toInt(materialForm.quantidade),
+      await API.post("/produtos", {
+        nome: produtoForm.nome.trim(),
+        quantidade: toInt(produtoForm.quantidade),
+        estoque_minimo: toInt(produtoForm.estoque_minimo),
       });
-      await carregarMateriais();
-      limparMaterialForm();
+      await carregarProdutos();
+      limparProdutoForm();
     } catch (e) {
-      alert(e?.response?.data?.error || "Erro ao criar material");
+      alert(e?.response?.data?.error || "Erro ao criar produto");
     }
   };
 
   const iniciarEdicao = (p) => {
-    setEditandoId(p.material_id);
-    setMaterialForm({
-      id: p.material_id,
-      nome: p.material_nome,
-      tipo: p.material_tipo || "",
-      quantidade: p.material_quantidade,
+    setEditandoId(p.id);
+    setProdutoForm({
+      id: p.id,
+      nome: p.nome,
+      quantidade: p.quantidade,
+      estoque_minimo: p.estoque_minimo,
     });
   };
 
-  const salvarMaterial = async () => {
+  const salvarProduto = async () => {
     if (!editandoId) return;
-    const msg = validarMaterialForm();
+    const msg = validarProdutoForm();
     if (msg) return alert(msg);
     try {
-      await API.put(`/materiais/${editandoId}`, {
-        nome: materialForm.nome.trim(),
-        tipo: notEmpty(materialForm.tipo) ? materialForm.tipo.trim() : null,
-        quantidade: toInt(materialForm.quantidade),
+      await API.put(`/produtos/${editandoId}`, {
+        nome: produtoForm.nome.trim(),
+        quantidade: toInt(produtoForm.quantidade),
+        estoque_minimo: toInt(produtoForm.estoque_minimo),
       });
-      await carregarMateriais();
-      limparMaterialForm();
+      await carregarProdutos();
+      limparProdutoForm();
     } catch (e) {
-      alert(e?.response?.data?.error || "Erro ao salvar material");
+      alert(e?.response?.data?.error || "Erro ao salvar produto");
     }
   };
 
-  const excluirMaterial = async (id) => {
-    if (!window.confirm("Excluir este material?")) return;
+  const excluirProduto = async (id) => {
+    if (!window.confirm("Excluir este produto?")) return;
     try {
-      await API.delete(`/materiais/${id}`);
-      await carregarMateriais();
+      await API.delete(`/produtos/${id}`);
+      await carregarProdutos();
+      // 6.1.5 — excluir
     } catch (e) {
-      alert(e?.response?.data?.error || "Erro ao excluir material");
+      alert(e?.response?.data?.error || "Erro ao excluir produto");
     }
   };
 
   const buscar = async (e) => {
     e?.preventDefault();
-    await carregarMateriais(q);
+    await carregarProdutos(q);
+    // 6.1.2 — busca atualiza a listagem
   };
 
-  const [movMaterialId, setMovMaterialId] = useState("");
+  // -------------------------------
+  // gestão de estoque (7)
+  // -------------------------------
+  const [movProdutoId, setMovProdutoId] = useState("");
+  const [movTipo, setMovTipo] = useState("entrada"); // entrada|saida
+  const [movQuantidade, setMovQuantidade] = useState("");
   const [movData, setMovData] = useState(""); // date (yyyy-mm-dd)
+  const [movObs, setMovObs] = useState("");
 
-  const registrarEmprestimo = async () => {
+  const enviarMovimentacao = async () => {
     if (!user) return alert("Faça login.");
-    if (!movMaterialId) return alert("Selecione um material.");
+    if (!movProdutoId) return alert("Selecione um produto.");
+    if (!["entrada", "saida"].includes(movTipo)) return alert("Tipo inválido.");
+    const qtd = toInt(movQuantidade);
+    if (!(qtd > 0)) return alert("Informe uma quantidade > 0.");
 
     try {
       const payload = {
-        material_id: Number(movMaterialId),
+        produto_id: Number(movProdutoId),
         usuario_id: user.id,
-        data_esprestimo: notEmpty(movData) ? new Date(movData).toISOString() : null,
+        tipo: movTipo,
+        quantidade: qtd,
+        data_movimentacao: notEmpty(movData) ? new Date(movData).toISOString() : null, // 7.1.3
+        observacao: notEmpty(movObs) ? movObs.trim() : null,
       };
-      await API.post("/movimentoestoque", payload);
-      alert("Empréstimo registrado com sucesso (1 unidade retirada).");
-      await carregarMateriais();
-      setMovData("");
+      const { data } = await API.post("/movimentacoes", payload);
+      // data.produto.abaxo_do_minimo (do backend)
+      alert("Movimentação registrada com sucesso.");
+      if (data?.produto?.abaixo_do_minimo) {
+        alert("⚠️ Estoque abaixo do mínimo para este produto!");
+      }
+      // atualizar listagem para refletir novo saldo
+      await carregarProdutos();
+      // limpar form
+      setMovQuantidade("");
+      setMovObs("");
+      // manter produto/tipo/data para facilitar uso contínuo
     } catch (e) {
-      alert(e?.response?.data?.error || "Erro ao registrar empréstimo");
+      alert(e?.response?.data?.error || "Erro ao registrar movimentação");
     }
   };
 
+  // -------------------------------
+  // Render
+  // -------------------------------
   return (
     <div className="app-container">
       <h1>meia meia meia — Gestão de Estoque</h1>
 
+      {/* LOGIN (4) */}
       {view === "login" && (
         <section className="form" aria-label="login">
           <h2>Login</h2>
@@ -204,60 +239,64 @@ export default function App() {
         </section>
       )}
 
+      {/* HOME (5) */}
       {view === "home" && (
         <section className="form" aria-label="home">
           <h2>Olá, {user?.nome}</h2>
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => setView("materiais")}>Cadastro de Material</button>
+            <button onClick={() => setView("produtos")}>Cadastro de Produto</button>
             <button onClick={() => setView("estoque")}>Gestão de Estoque</button>
             <button onClick={logout}>Sair</button>
           </div>
         </section>
       )}
 
-      {view === "materiais" && (
-        <section className="form" aria-label="materiais">
-          <h2>Cadastro de Material</h2>
+      {/* CADASTRO DE PRODUTO (6) */}
+      {view === "produtos" && (
+        <section className="form" aria-label="produtos">
+          <h2>Cadastro de Produto</h2>
 
+          {/* busca (6.1.2) */}
           <form onSubmit={buscar} style={{ width: "100%", display: "flex", gap: 8 }}>
             <input
               type="text"
-              placeholder="Buscar por nome (ex.: bola)"
+              placeholder="Buscar por nome (ex.: arrastão)"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
             <button type="submit">Buscar</button>
-            <button type="button" onClick={() => { setQ(""); carregarMateriais(""); }}>
+            <button type="button" onClick={() => { setQ(""); carregarProdutos(""); }}>
               Limpar
             </button>
           </form>
 
+          {/* form criar/editar (6.1.3–6.1.4–6.1.6) */}
           <div style={{ width: "100%", display: "grid", gap: 8 }}>
             <div className="input-container">
               <label>Nome</label>
               <input
                 type="text"
-                value={materialForm.nome}
-                onChange={(e) => setMaterialForm((s) => ({ ...s, nome: e.target.value }))}
-                placeholder='ex.: "Bola de Vôlei"'
+                value={produtoForm.nome}
+                onChange={(e) => setProdutoForm((s) => ({ ...s, nome: e.target.value }))}
+                placeholder='ex.: "meia meia meia arrastão"'
                 required
-              />
-            </div>
-            <div className="input-container">
-              <label>Tipo (opcional)</label>
-              <input
-                type="text"
-                value={materialForm.tipo}
-                onChange={(e) => setMaterialForm((s) => ({ ...s, tipo: e.target.value }))}
-                placeholder='ex.: "Esportivo"'
               />
             </div>
             <div className="input-container">
               <label>Quantidade</label>
               <input
                 type="number"
-                value={materialForm.quantidade}
-                onChange={(e) => setMaterialForm((s) => ({ ...s, quantidade: e.target.value }))}
+                value={produtoForm.quantidade}
+                onChange={(e) => setProdutoForm((s) => ({ ...s, quantidade: e.target.value }))}
+                min={0}
+              />
+            </div>
+            <div className="input-container">
+              <label>Estoque mínimo</label>
+              <input
+                type="number"
+                value={produtoForm.estoque_minimo}
+                onChange={(e) => setProdutoForm((s) => ({ ...s, estoque_minimo: e.target.value }))}
                 min={0}
               />
             </div>
@@ -265,42 +304,47 @@ export default function App() {
             <div style={{ display: "flex", gap: 8 }}>
               {editandoId ? (
                 <>
-                  <button type="button" onClick={salvarMaterial}>Salvar alterações</button>
-                  <button type="button" onClick={limparMaterialForm}>Cancelar</button>
+                  <button type="button" onClick={salvarProduto}>Salvar alterações</button>
+                  <button type="button" onClick={limparProdutoForm}>Cancelar</button>
                 </>
               ) : (
-                <button type="button" onClick={criarMaterial}>Cadastrar material</button>
+                <button type="button" onClick={criarProduto}>Cadastrar produto</button>
               )}
               <button type="button" onClick={() => setView("home")}>Voltar</button>
             </div>
           </div>
 
+          {/* listagem (6.1.1) — em tabela; (6.1.5) excluir; editar */}
           <div style={{ width: "100%", marginTop: 10 }}>
-            {loadingMateriais && <p>Carregando...</p>}
-            {!loadingMateriais && (
+            {loadingProdutos && <p>Carregando...</p>}
+            {!loadingProdutos && (
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
                     <th style={{ textAlign: "left" }}>Nome</th>
                     <th>Qtd</th>
-                    <th>Tipo</th>
+                    <th>Mín</th>
+                    <th>Alerta</th>
                     <th>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {materiaisOrdenados.map((p) => (
-                    <tr key={p.material_id}>
-                      <td>{p.material_nome}</td>
-                      <td style={{ textAlign: "center" }}>{p.material_quantidade}</td>
-                      <td style={{ textAlign: "center" }}>{p.material_tipo || "—"}</td>
+                  {produtosOrdenados.map((p) => (
+                    <tr key={p.id}>
+                      <td>{p.nome}</td>
+                      <td style={{ textAlign: "center" }}>{p.quantidade}</td>
+                      <td style={{ textAlign: "center" }}>{p.estoque_minimo}</td>
+                      <td style={{ textAlign: "center" }}>
+                        {p.quantidade < p.estoque_minimo ? "⚠️" : "—"}
+                      </td>
                       <td style={{ display: "flex", gap: 6, justifyContent: "center" }}>
                         <button type="button" onClick={() => iniciarEdicao(p)}>Editar</button>
-                        <button type="button" onClick={() => excluirMaterial(p.material_id)}>Excluir</button>
+                        <button type="button" onClick={() => excluirProduto(p.id)}>Excluir</button>
                       </td>
                     </tr>
                   ))}
-                  {materiaisOrdenados.length === 0 && (
-                    <tr><td colSpan={4}>Nenhum material.</td></tr>
+                  {produtosOrdenados.length === 0 && (
+                    <tr><td colSpan={5}>Nenhum produto.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -309,41 +353,64 @@ export default function App() {
         </section>
       )}
 
+      {/* GESTÃO DE ESTOQUE (7) */}
       {view === "estoque" && (
         <section className="form" aria-label="estoque">
           <h2>Gestão de Estoque</h2>
 
+          {/* listagem alfabética (7.1.1) */}
           <div style={{ width: "100%" }}>
-            <h3>Materiais (ordem alfabética)</h3>
+            <h3>Produtos (ordem alfabética)</h3>
             <ul style={{ listStyle: "none", paddingLeft: 0 }}>
-              {materiaisOrdenados.map((p) => (
-                <li key={p.material_id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ width: "50%" }}>{p.material_nome}</span>
-                  <span>Qtd: <b>{p.material_quantidade}</b></span>
-                  <span>Tipo: <b>{p.material_tipo || "N/A"}</b></span>
+              {produtosOrdenados.map((p) => (
+                <li key={p.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ width: "50%" }}>{p.nome}</span>
+                  <span>Qtd: <b>{p.quantidade}</b></span>
+                  <span>Mín: <b>{p.estoque_minimo}</b></span>
+                  <span>{p.quantidade < p.estoque_minimo ? "⚠️ Baixo" : ""}</span>
                 </li>
               ))}
             </ul>
           </div>
 
+          {/* formulário de movimentação (7.1.2–7.1.3–7.1.4) */}
           <div style={{ width: "100%", marginTop: 10 }}>
-            <h3>Registrar Empréstimo (Saída)</h3>
+            <h3>Registrar movimentação</h3>
             <div className="input-container">
-              <label>Material</label>
+              <label>Produto</label>
               <select
-                value={movMaterialId}
-                onChange={(e) => setMovMaterialId(e.target.value)}
+                value={movProdutoId}
+                onChange={(e) => setMovProdutoId(e.target.value)}
                 style={{ width: "100%", padding: 10, borderRadius: 5, border: "1px solid #ccc" }}
               >
                 <option value="">Selecione...</option>
-                {materiaisOrdenados.map((p) => (
-                  <option key={p.material_id} value={p.material_id}>{p.material_nome}</option>
+                {produtosOrdenados.map((p) => (
+                  <option key={p.id} value={p.id}>{p.nome}</option>
                 ))}
               </select>
             </div>
 
             <div className="input-container">
-              <label>Data do Empréstimo (opcional)</label>
+              <label>Tipo</label>
+              <div style={{ display: "flex", gap: 10 }}>
+                <label><input type="radio" name="tipo" value="entrada" checked={movTipo === "entrada"} onChange={(e) => setMovTipo(e.target.value)} /> Entrada</label>
+                <label><input type="radio" name="tipo" value="saida" checked={movTipo === "saida"} onChange={(e) => setMovTipo(e.target.value)} /> Saída</label>
+              </div>
+            </div>
+
+            <div className="input-container">
+              <label>Quantidade</label>
+              <input
+                type="number"
+                min={1}
+                value={movQuantidade}
+                onChange={(e) => setMovQuantidade(e.target.value)}
+                placeholder="Ex.: 5"
+              />
+            </div>
+
+            <div className="input-container">
+              <label>Data da movimentação</label>
               <input
                 type="date"
                 value={movData}
@@ -351,8 +418,18 @@ export default function App() {
               />
             </div>
 
+            <div className="input-container">
+              <label>Observação (opcional)</label>
+              <input
+                type="text"
+                value={movObs}
+                onChange={(e) => setMovObs(e.target.value)}
+                placeholder="Ex.: retirada para feira"
+              />
+            </div>
+
             <div style={{ display: "flex", gap: 8 }}>
-              <button type="button" onClick={registrarEmprestimo}>Registrar Empréstimo</button>
+              <button type="button" onClick={enviarMovimentacao}>Registrar</button>
               <button type="button" onClick={() => setView("home")}>Voltar</button>
             </div>
           </div>

@@ -1,11 +1,13 @@
+// server.js — mini backend "meia meia meia" (Prova SAEP)
+// npm i express cors pg
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 
 const app = express();
 const pool = new Pool({
-  user: 'postgres',         // <-- ajuste aqui se necessário
-  password: 'senai',         // <-- ajuste aqui se necessário
+  user: 'postgres',            // <-- ajuste aqui
+  password: 'postgre',        // <-- ajuste aqui
   host: 'localhost',
   port: 5432,
   database: 'saep_db',         // banco exigido pela prova
@@ -32,19 +34,20 @@ app.get('/health', async (_req, res) => {
 });
 
 // -----------------------------
-// USUÁRIOS
+// USUÁRIOS (divulgadores)
 // -----------------------------
+
+// cadastro de usuário (nome, email, senha)
 app.post('/usuarios', async (req, res) => {
-  const { nome, email, senha, treinador = false, codigo_funcionario = null } = req.body || {};
+  const { nome, email, senha } = req.body || {};
   if (!nome || !email || !senha) return fail(res, 'Campos obrigatórios: nome, email, senha', 400);
-  
   try {
     const q = `
-      INSERT INTO usuarios (usuario_nome, usuario_email, usuario_senha, usuario_treinador, usuario_codigo_funcionario)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING usuario_id, usuario_nome, usuario_email, usuario_treinador, usuario_codigo_funcionario
+      INSERT INTO usuarios (nome, email, senha)
+      VALUES ($1,$2,$3)
+      RETURNING id, nome, email
     `;
-    const r = await pool.query(q, [nome, email, senha, Boolean(treinador), codigo_funcionario]);
+    const r = await pool.query(q, [nome, email, senha]);
     ok(res, r.rows[0]);
   } catch (e) {
     if (String(e?.message).includes('unique')) return fail(res, 'E-mail já cadastrado', 409);
@@ -52,14 +55,13 @@ app.post('/usuarios', async (req, res) => {
   }
 });
 
+// login simples (sem sessão/JWT — retorna o usuário se credenciais ok)
 app.post('/auth/login', async (req, res) => {
   const { email, senha } = req.body || {};
   if (!email || !senha) return fail(res, 'Informe email e senha', 400);
   try {
     const r = await pool.query(
-      `SELECT usuario_id, usuario_nome, usuario_email, usuario_treinador, usuario_codigo_funcionario 
-       FROM usuarios 
-       WHERE usuario_email=$1 AND usuario_senha=$2`,
+      'SELECT id, nome, email FROM usuarios WHERE email=$1 AND senha=$2',
       [email, senha]
     );
     if (r.rows.length === 0) return fail(res, 'Credenciais inválidas', 401);
@@ -68,17 +70,19 @@ app.post('/auth/login', async (req, res) => {
 });
 
 // -----------------------------
-// MATERIAIS
+// PRODUTOS (modelos de meias)
 // -----------------------------
 
-app.get('/materiais', async (req, res) => {
+// listar produtos (ordem alfabética, busca opcional ?q=)
+app.get('/produtos', async (req, res) => {
   const q = (req.query.q || '').trim();
   const hasQ = q.length > 0;
   const sql =
-    `SELECT material_id, material_nome, material_tipo, material_quantidade
-       FROM materiais
-     ${hasQ ? 'WHERE lower(material_nome) LIKE lower($1)' : ''}
-     ORDER BY material_nome ASC`;
+    `SELECT id, nome, quantidade, estoque_minimo,
+            (quantidade < estoque_minimo) AS abaixo_do_minimo
+       FROM produtos
+      ${hasQ ? 'WHERE lower(nome) LIKE lower($1)' : ''}
+      ORDER BY nome ASC`;
   try {
     const args = hasQ ? [`%${q}%`] : [];
     const r = await pool.query(sql, args);
@@ -86,85 +90,98 @@ app.get('/materiais', async (req, res) => {
   } catch (e) { fail(res, e); }
 });
 
-app.get('/materiais/:id', async (req, res) => {
+// obter 1 produto
+app.get('/produtos/:id', async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT material_id, material_nome, material_tipo, material_quantidade
-         FROM materiais WHERE material_id=$1`,
+      `SELECT id, nome, quantidade, estoque_minimo,
+              (quantidade < estoque_minimo) AS abaixo_do_minimo
+         FROM produtos WHERE id=$1`,
       [req.params.id]
     );
-    if (!r.rows.length) return fail(res, 'Material não encontrado', 404);
+    if (!r.rows.length) return fail(res, 'Produto não encontrado', 404);
     ok(res, r.rows[0]);
   } catch (e) { fail(res, e); }
 });
 
-app.post('/materiais', async (req, res) => {
-  const { nome, tipo, quantidade = 0 } = req.body || {};
+// criar produto
+app.post('/produtos', async (req, res) => {
+  const { nome, quantidade = 0, estoque_minimo = 0 } = req.body || {};
   if (!nome) return fail(res, 'Campo obrigatório: nome', 400);
   try {
     const r = await pool.query(
-      `INSERT INTO materiais (material_nome, material_tipo, material_quantidade)
-       VALUES ($1, $2, $3)
-       RETURNING material_id, material_nome, material_tipo, material_quantidade`,
-      [nome, tipo || null, Number(quantidade) || 0]
+      `INSERT INTO produtos (nome, quantidade, estoque_minimo)
+       VALUES ($1,$2,$3)
+       RETURNING id, nome, quantidade, estoque_minimo`,
+      [nome, Number(quantidade) || 0, Number(estoque_minimo) || 0]
     );
     ok(res, r.rows[0]);
   } catch (e) { fail(res, e); }
 });
 
-app.put('/materiais/:id', async (req, res) => {
-  const { nome, tipo, quantidade } = req.body || {};
+// atualizar produto
+app.put('/produtos/:id', async (req, res) => {
+  const { nome, quantidade, estoque_minimo } = req.body || {};
   try {
     const r = await pool.query(
-      `UPDATE materiais
-         SET material_nome = COALESCE($1, material_nome),
-             material_tipo = COALESCE($2, material_tipo),
-             material_quantidade = COALESCE($3, material_quantidade)
-       WHERE material_id=$4
-       RETURNING material_id, material_nome, material_tipo, material_quantidade`,
-      [nome ?? null, tipo ?? null, quantidade ?? null, req.params.id]
+      `UPDATE produtos
+          SET nome = COALESCE($1, nome),
+              quantidade = COALESCE($2, quantidade),
+              estoque_minimo = COALESCE($3, estoque_minimo)
+        WHERE id=$4
+      RETURNING id, nome, quantidade, estoque_minimo`,
+      [nome ?? null, quantidade ?? null, estoque_minimo ?? null, req.params.id]
     );
-    if (!r.rows.length) return fail(res, 'Material não encontrado', 404);
+    if (!r.rows.length) return fail(res, 'Produto não encontrado', 404);
     ok(res, r.rows[0]);
   } catch (e) { fail(res, e); }
 });
 
-app.delete('/materiais/:id', async (req, res) => {
+// deletar produto
+app.delete('/produtos/:id', async (req, res) => {
   try {
-    const r = await pool.query('DELETE FROM materiais WHERE material_id=$1 RETURNING material_id', [req.params.id]);
-    if (!r.rows.length) return fail(res, 'Material não encontrado', 404);
-    ok(res, { message: 'Material excluído' });
+    const r = await pool.query('DELETE FROM produtos WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rows.length) return fail(res, 'Produto não encontrado', 404);
+    ok(res, { message: 'Produto excluído' });
   } catch (e) { fail(res, e); }
 });
 
-app.post('/movimentoestoque', async (req, res) => {
-  const { material_id, usuario_id, data_esprestimo } = req.body || {};
-  if (!material_id || !usuario_id)
-    return fail(res, 'Campos obrigatórios: material_id, usuario_id', 400);
+// -----------------------------
+// MOVIMENTAÇÕES (entrada/saída)
+// -----------------------------
+
+// criar movimentação + atualizar saldo do produto (transação simples)
+app.post('/movimentacoes', async (req, res) => {
+  const { produto_id, usuario_id, tipo, quantidade, data_movimentacao, observacao } = req.body || {};
+  if (!produto_id || !usuario_id || !tipo || !quantidade)
+    return fail(res, 'Campos obrigatórios: produto_id, usuario_id, tipo, quantidade', 400);
+
+  if (!['entrada', 'saida'].includes(String(tipo).toLowerCase()))
+    return fail(res, "tipo deve ser 'entrada' ou 'saida'", 400);
+
+  const delta = String(tipo).toLowerCase() === 'entrada' ? +Math.abs(quantidade) : -Math.abs(quantidade);
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
+    // atualiza saldo
     const up = await client.query(
-      `UPDATE materiais 
-       SET material_quantidade = material_quantidade - 1 
-       WHERE material_id=$1 AND material_quantidade > 0 
-       RETURNING *`,
-      [material_id]
+      'UPDATE produtos SET quantidade = quantidade + $1 WHERE id=$2 RETURNING id, nome, quantidade, estoque_minimo',
+      [delta, produto_id]
     );
-    
     if (!up.rows.length) {
       await client.query('ROLLBACK');
       client.release();
-      return fail(res, 'Material não encontrado ou sem estoque', 404);
+      return fail(res, 'Produto não encontrado', 404);
     }
 
+    // registra movimento
     const ins = await client.query(
-      `INSERT INTO movimentoestoque (material_id, usuario_id, material_disponivel, material_data_esprestimo, material_data_devolucao)
-       VALUES ($1, $2, FALSE, COALESCE($3, NOW()), NULL)
-       RETURNING *`, 
-      [material_id, usuario_id, data_esprestimo || null]
+      `INSERT INTO movimentacoes (produto_id, usuario_id, tipo, quantidade, data_movimentacao, observacao)
+       VALUES ($1,$2,$3,$4,COALESCE($5, NOW()),$6)
+       RETURNING id, produto_id, usuario_id, tipo, quantidade, data_movimentacao, observacao`,
+      [produto_id, usuario_id, String(tipo).toLowerCase(), Math.abs(quantidade), data_movimentacao || null, observacao || null]
     );
 
     await client.query('COMMIT');
@@ -172,7 +189,10 @@ app.post('/movimentoestoque', async (req, res) => {
 
     ok(res, {
       movimento: ins.rows[0],
-      material: up.rows[0], 
+      produto: {
+        ...up.rows[0],
+        abaixo_do_minimo: up.rows[0].quantidade < up.rows[0].estoque_minimo,
+      },
     });
   } catch (e) {
     try { await client.query('ROLLBACK'); } catch (_) {}
@@ -181,73 +201,22 @@ app.post('/movimentoestoque', async (req, res) => {
   }
 });
 
-app.put('/movimentoestoque/:id/devolver', async (req, res) => {
-  const { id: movimentoestoque_id } = req.params;
-  const { data_devolucao } = req.body || {};
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const mov = await client.query(
-      `UPDATE movimentoestoque
-       SET material_disponivel = TRUE, 
-           material_data_devolucao = COALESCE($1, NOW())
-       WHERE movimentoestoque_id = $2 AND material_data_devolucao IS NULL
-       RETURNING *`, // Retorna o movimento atualizado
-      [data_devolucao || null, movimentoestoque_id]
-    );
-
-    if (!mov.rows.length) {
-      await client.query('ROLLBACK');
-      client.release();
-      return fail(res, 'Empréstimo não encontrado ou já devolvido', 404);
-    }
-    
-    const movimentoAtualizado = mov.rows[0];
-    
-    const up = await client.query(
-      `UPDATE materiais
-       SET material_quantidade = material_quantidade + 1
-       WHERE material_id = $1
-       RETURNING *`, 
-      [movimentoAtualizado.material_id]
-    );
-
-    await client.query('COMMIT');
-    client.release();
-
-    ok(res, {
-      movimento: movimentoAtualizado,
-      material: up.rows[0],
-    });
-
-  } catch (e) {
-    try { await client.query('ROLLBACK'); } catch (_) {}
-    client.release();
-    fail(res, e);
-  }
-});
-
-
-
-app.get('/movimentoestoque', async (req, res) => {
-  const { material_id } = req.query;
-  const hasFilter = !!material_id;
-  
+// histórico geral ou filtrado por produto (?produto_id=)
+app.get('/movimentacoes', async (req, res) => {
+  const { produto_id } = req.query;
+  const hasFilter = !!produto_id;
   const sql = `
-    SELECT m.movimentoestoque_id, 
-           m.material_id, p.material_nome,
-           m.usuario_id, u.usuario_nome,
-           m.material_disponivel, m.material_data_esprestimo, m.material_data_devolucao
-      FROM movimentoestoque m
-      JOIN materiais p ON p.material_id = m.material_id
-      JOIN usuarios u ON u.usuario_id = m.usuario_id
-     ${hasFilter ? 'WHERE m.material_id = $1' : ''}
-     ORDER BY m.material_data_esprestimo DESC, m.movimentoestoque_id DESC
+    SELECT m.id, m.produto_id, p.nome AS produto_nome,
+           m.usuario_id, u.nome AS responsavel_nome,
+           m.tipo, m.quantidade, m.data_movimentacao, m.observacao
+      FROM movimentacoes m
+      JOIN produtos p ON p.id = m.produto_id
+      JOIN usuarios u ON u.id = m.usuario_id
+     ${hasFilter ? 'WHERE m.produto_id = $1' : ''}
+     ORDER BY m.data_movimentacao DESC, m.id DESC
   `;
   try {
-    const r = await pool.query(sql, hasFilter ? [material_id] : []);
+    const r = await pool.query(sql, hasFilter ? [produto_id] : []);
     ok(res, r.rows);
   } catch (e) { fail(res, e); }
 });
